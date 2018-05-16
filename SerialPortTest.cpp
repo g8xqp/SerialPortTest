@@ -421,9 +421,6 @@ private:
 
 int main(int argc, char *argv[]){
   int i;
-  // open default serial port
-  // remember port state
-  // read data from port in check_menu_time routine
   while(CW.CheckInputs());
   endwin();
   printf("Build date %s, %s\n",__DATE__,__TIME__);
