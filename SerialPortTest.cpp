@@ -21,6 +21,7 @@ private:
   int serial_fd;
   int handshake_state;
   struct termios new_tio;
+  // man ioctl_tty
   void SetHandshake(bool NewState,int handshake_flag){
     if(PortIsOpen()){
       if(NewState){
@@ -30,17 +31,15 @@ private:
       }
     }
   }
-  bool GetHandshake(int handshake_flag){
+  bool GetHandshake(bool Poll,int handshake_flag){
     bool r=false;
     if(PortIsOpen()){
+      if(Poll) ioctl(serial_fd, TIOCMGET, &handshake_state);
       r=(handshake_state  & handshake_flag);
     }
     return(r);
   }
 public:
-  void PollHandshake(){
-    if(PortIsOpen()) ioctl(serial_fd, TIOCMGET, &handshake_state);
-  }
   void OpenPort(char * port,char * message ){
     if(PortIsOpen())ClosePort();
     serial_io = fopen(port, "r+");
@@ -56,11 +55,10 @@ public:
 	} else {
 	  cfmakeraw(&new_tio);
 	  new_tio.c_cflag = B9600 | CS8 | CSTOPB | CLOCAL | CREAD ; 
-	  // new_tio.c_cflag = B9600 | CS8 | CSTOPB | CREAD ; 
 	  tcflush(fileno(serial_io), TCIFLUSH);
 	  tcsetattr(fileno(serial_io),TCSANOW,&new_tio);
 	  strcpy(message,"Serial IO port open");
-	  PollHandshake();
+	  GetHandshake(true,0);
 	} 
       }
     } else {
@@ -89,29 +87,29 @@ public:
       serial_fd=0;
     }
   }
-  // man ioctl_tty
   void SetDTR(bool NewState){
     SetHandshake(NewState,TIOCM_DTR);
-    PollHandshake();
   }
   void SetRTS(bool NewState){
     SetHandshake(NewState,TIOCM_RTS);
-    PollHandshake();
   }
-  bool GetCTS(){
-    return(GetHandshake(TIOCM_CTS));
+  bool GetCTS(bool Poll){
+    return(GetHandshake(Poll,TIOCM_CTS));
   }
-  bool GetDCD(){
-    return(GetHandshake(TIOCM_CAR));
+  bool GetDCD(bool Poll){
+    return(GetHandshake(Poll,TIOCM_CAR));
   }
-  bool GetDTR(){
-    return(GetHandshake(TIOCM_DTR));
+  bool GetDSR(bool Poll){
+    return(GetHandshake(Poll,TIOCM_DSR));
   }
-  bool GetRI(){
-    return(GetHandshake(TIOCM_RNG));
+  bool GetDTR(bool Poll){
+    return(GetHandshake(Poll,TIOCM_DTR));
   }
-  bool GetRTS(){
-    return(GetHandshake(TIOCM_RTS));
+  bool GetRI(bool Poll){
+    return(GetHandshake(Poll,TIOCM_RNG));
+  }
+  bool GetRTS(bool Poll){
+    return(GetHandshake(Poll,TIOCM_RTS));
   }
   bool PortIsOpen(){
     return(serial_io!=NULL);
@@ -174,8 +172,8 @@ private:
     "Display Mode (Ascii,Hex) ",
     "Toggle DTR               ",
     "Toggle RTS               ",
-    "Output string            ",
-    "Exit                     " };
+    "Send string              ",
+    "EXIT:                    " };
   void QueryMenu(const char * query,char * reply){
     int msize;
     msize=sizeof(menu_choices[0])-1;
@@ -236,22 +234,23 @@ private:
 	      SerialPort,
 	      (char*)(MyPort.PortIsOpen()?"[Open]":"[Closed]")); 
     mvwprintw(lower_window, 1,VAL_COL, "= %s  ",disp_mode); 
-    mvwprintw(lower_window, 2,VAL_COL, "= %d  ",(MyPort.GetDTR()?1:0));
-    mvwprintw(lower_window, 3,VAL_COL, "= %d  ",(MyPort.GetRTS()?1:0)); 
-    mvwprintw(lower_window, 5,VAL_COL-15, "  %s  ",text_time); 
+    mvwprintw(lower_window, 2,VAL_COL, "= %d  ",(MyPort.GetDTR(false)?1:0));
+    mvwprintw(lower_window, 3,VAL_COL, "= %d  ",(MyPort.GetRTS(false)?1:0)); 
+    mvwprintw(lower_window, 5,VAL_COL-20, "  %s  ",text_time); 
     wrefresh(lower_window);
   }
   void ShowHandshake(){
-    bool cts,dcd,dtr,ri,rts;
-    MyPort.PollHandshake();
-    cts=MyPort.GetCTS();
-    dcd=MyPort.GetDCD();
-    dtr=MyPort.GetDTR();
-    ri=MyPort.GetRI();
-    rts=MyPort.GetRTS();
-    mvwprintw(lower_window,5,VAL_COL-2," CTS=%c DCD=%c DTR=%c RI=%c RTS=%c ",
+    bool cts,dcd,dsr,dtr,ri,rts;
+    cts=MyPort.GetCTS(true);
+    dcd=MyPort.GetDCD(false);
+    dsr=MyPort.GetDSR(false);
+    dtr=MyPort.GetDTR(false);
+    ri=MyPort.GetRI(false);
+    rts=MyPort.GetRTS(false);
+    mvwprintw(lower_window,5,VAL_COL-7," CTS=%c DCD=%c DSR=%c DTR=%c RI=%c RTS=%c ",
 	      (cts?'1':'0'),
 	      (dcd?'1':'0'),
+	      (dsr?'1':'0'),
 	      (dtr?'1':'0'),
 	      (ri?'1':'0'),
 	      (rts?'1':'0'));
@@ -343,19 +342,15 @@ private:
 	    LogWindowMessage((char *)"# ",newstring);
 	    break;
 	  case 2:
-	    if(DisplayMode>=1){
-	      DisplayMode=0;
-	    } else {
-	      DisplayMode++;
-	    }
+	    if(++DisplayMode>=1)DisplayMode=0;
 	    break;
 	  case 3:
-	    MyPort.SetDTR(!MyPort.GetDTR());
-	    LogWindowMessage((char *)"> ",(char *)(MyPort.GetDTR()?"DTR +":"DTR -"));
+	    MyPort.SetDTR(!MyPort.GetDTR(false));
+	    LogWindowMessage((char *)"> ",(char *)(MyPort.GetDTR(true)?"DTR +":"DTR -"));
 	    break;
 	  case 4:
-	    MyPort.SetRTS(!MyPort.GetRTS());
-	    LogWindowMessage((char *)"> ",(char *)(MyPort.GetRTS()?"RTS +":"RTS -"));
+	    MyPort.SetRTS(!MyPort.GetRTS(false));
+	    LogWindowMessage((char *)"> ",(char *)(MyPort.GetRTS(true)?"RTS +":"RTS -"));
 	    break;
 	  case 5:
 	    QueryMenu("Write string?",newstring);
