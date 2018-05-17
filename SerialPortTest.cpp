@@ -267,7 +267,7 @@ private:
   }
   bool CheckMenuSelected(){
     bool chosen=false;
-    halfdelay(10);
+    halfdelay(1);
     switch(wgetch(lower_window)) {
     case KEY_UP:
       NextMenu(-1);
