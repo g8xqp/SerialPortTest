@@ -18,19 +18,39 @@
 class MyPort{
 private:
   FILE * serial_io;
+  int serial_fd;
+  int handshake_state;
   struct termios new_tio;
+  void SetHandshake(bool NewState,int handshake_flag){
+    if(PortIsOpen()){
+      if(NewState){
+	ioctl(serial_fd,TIOCMBIS,&handshake_flag);
+      } else {
+	ioctl(serial_fd,TIOCMBIC,&handshake_flag);
+      }
+    }
+  }
+  bool GetHandshake(int handshake_flag){
+    bool r=false;
+    if(PortIsOpen()){
+      r=(handshake_state  & handshake_flag);
+    }
+    return(r);
+  }
 public:
+  void PollHandshake(){
+    if(PortIsOpen()) ioctl(serial_fd, TIOCMGET, &handshake_state);
+  }
   void OpenPort(char * port,char * message ){
-    if(serial_io != NULL)ClosePort();
+    if(PortIsOpen())ClosePort();
     serial_io = fopen(port, "r+");
-    if(serial_io==NULL){
-      strcpy(message,"Cannot open serial port");
-    } else {
-      if (0!=flock(fileno(serial_io),LOCK_EX|LOCK_NB)){
+    if(PortIsOpen()){
+      serial_fd=fileno(serial_io);
+      if (0!=flock(serial_fd,LOCK_EX|LOCK_NB)){
 	strcpy(message,"Serial IO port locked");
 	ClosePort();
       } else {
-	if(0!= fcntl(fileno(serial_io), F_SETFL, O_RDWR | O_NONBLOCK )){
+	if(0!= fcntl(serial_fd, F_SETFL, O_RDWR | O_NONBLOCK )){
 	  strcpy(message,"Serial IO port cannot set flags.");
 	  ClosePort();
 	} else {
@@ -40,107 +60,64 @@ public:
 	  tcflush(fileno(serial_io), TCIFLUSH);
 	  tcsetattr(fileno(serial_io),TCSANOW,&new_tio);
 	  strcpy(message,"Serial IO port open");
+	  PollHandshake();
 	} 
       }
+    } else {
+      strcpy(message,"Cannot open serial port");
     }
   }
   
   bool ReadPort(char * NewString){
     int j=0;
-    if(IsPortOpen())j=fread(NewString,1,60,serial_io);
+    if(PortIsOpen())j=fread(NewString,1,60,serial_io);
     NewString[j]=0;
     return(j>0);
   }
   void WritePort(char * NewString){
     int i;
-    if(IsPortOpen()){
+    if(PortIsOpen()){
       for (i=0;i<strlen(NewString);i++)fputc(NewString[i],serial_io);
       fputc('\n',serial_io);
       fflush(serial_io);
     }
   }
   void ClosePort(){
-    if(IsPortOpen()){
+    if(PortIsOpen()){
       fclose(serial_io);
       serial_io=NULL;
+      serial_fd=0;
     }
   }
   // man ioctl_tty
   void SetDTR(bool NewState){
-    int DTR_flag;
-    int fd;
-    if(IsPortOpen()){
-      fd=fileno(serial_io);
-      DTR_flag = TIOCM_DTR;
-      if(NewState){
-	ioctl(fd,TIOCMBIS,&DTR_flag);
-      } else {
-	ioctl(fd,TIOCMBIC,&DTR_flag);
-      }
-    }
+    SetHandshake(NewState,TIOCM_DTR);
+    PollHandshake();
   }
   void SetRTS(bool NewState){
-    int RTS_flag;
-    int fd;
-    if(IsPortOpen()){
-      fd=fileno(serial_io);
-      RTS_flag = TIOCM_RTS;
-      if(NewState){
-	ioctl(fd,TIOCMBIS,&RTS_flag);
-      } else {
-	ioctl(fd,TIOCMBIC,&RTS_flag);
-      }
-    }
+    SetHandshake(NewState,TIOCM_RTS);
+    PollHandshake();
   }
   bool GetCTS(){
-    int fd;
-    int SerialState;
-    if(IsPortOpen()){
-      fd=fileno(serial_io);
-      ioctl(fd, TIOCMGET, &SerialState);
-      return(SerialState & TIOCM_CTS);
-    } else return(false);
+    return(GetHandshake(TIOCM_CTS));
   }
   bool GetDCD(){
-    int fd;
-    int SerialState;
-    if(IsPortOpen()){
-      fd=fileno(serial_io);
-      ioctl(fd, TIOCMGET, &SerialState);
-      return(SerialState & TIOCM_CAR);
-    } else return(false);
-  }
-  bool GetRI(){
-    int fd;
-    int SerialState;
-    if(IsPortOpen()){
-      fd=fileno(serial_io);
-      ioctl(fd, TIOCMGET, &SerialState);
-      return(SerialState & TIOCM_RNG);
-    } else return(false);
+    return(GetHandshake(TIOCM_CAR));
   }
   bool GetDTR(){
-    int fd;
-    int SerialState;
-    if(IsPortOpen()){
-      fd=fileno(serial_io);
-      ioctl(fd, TIOCMGET, &SerialState);
-      return(SerialState & TIOCM_DTR);
-    } else return(false);
+    return(GetHandshake(TIOCM_DTR));
+  }
+  bool GetRI(){
+    return(GetHandshake(TIOCM_RNG));
   }
   bool GetRTS(){
-    int fd;
-    int SerialState;
-    if(IsPortOpen()){
-      fd=fileno(serial_io);
-      ioctl(fd, TIOCMGET, &SerialState);
-      return(SerialState & TIOCM_RTS);
-    } else return(false);
+    return(GetHandshake(TIOCM_RTS));
   }
-  bool IsPortOpen(){
+  bool PortIsOpen(){
     return(serial_io!=NULL);
   }
-  MyPort():serial_io(NULL){}
+  MyPort():serial_io(NULL),
+	   serial_fd(0){}
   ~MyPort(){}
 }MyPort;
 
@@ -148,13 +125,6 @@ public:
 #define MINIMUM_COL 60
 class CurseWindow{
 private:
-  const char *menu_choices[6] = { 
-    "Select Port              ",
-    "Display Mode (Ascii,Hex) ",
-    "Toggle DTR               ",
-    "Toggle RTS               ",
-    "Output string            ",
-    "Exit                     " };
   WINDOW *upper_window_border;
   WINDOW *lower_window_border;
   WINDOW *upper_window;
@@ -199,6 +169,13 @@ private:
   }
 #define QUERY_COL 4
 #define VAL_COL 28
+  const char *menu_choices[6] = { 
+    "Select Port              ",
+    "Display Mode (Ascii,Hex) ",
+    "Toggle DTR               ",
+    "Toggle RTS               ",
+    "Output string            ",
+    "Exit                     " };
   void QueryMenu(const char * query,char * reply){
     int msize;
     msize=sizeof(menu_choices[0])-1;
@@ -257,31 +234,27 @@ private:
     strftime(text_time,20,"%H:%M:%S",gmtime(&TimeNow));
     mvwprintw(lower_window, 0,VAL_COL, "= %s  %s     ",
 	      SerialPort,
-	      (char*)(MyPort.IsPortOpen()?"[Open]":"[Closed]")); 
+	      (char*)(MyPort.PortIsOpen()?"[Open]":"[Closed]")); 
     mvwprintw(lower_window, 1,VAL_COL, "= %s  ",disp_mode); 
     mvwprintw(lower_window, 2,VAL_COL, "= %d  ",(MyPort.GetDTR()?1:0));
     mvwprintw(lower_window, 3,VAL_COL, "= %d  ",(MyPort.GetRTS()?1:0)); 
-    mvwprintw(lower_window, 5,VAL_COL-10, "  %s  ",text_time); 
+    mvwprintw(lower_window, 5,VAL_COL-15, "  %s  ",text_time); 
     wrefresh(lower_window);
   }
   void ShowHandshake(){
-    char cts[7],dcd[7],ri[7];
-    if(MyPort.GetCTS()){
-      strcpy(cts,"CTS");
-    } else {
-      strcpy(cts,"cts");
-    }
-    if(MyPort.GetDCD()){
-      strcpy(dcd,"DCD");
-    } else {
-      strcpy(dcd,"dcd");
-    }
-    if(MyPort.GetRI()){
-      strcpy(ri,"RI");
-    } else {
-      strcpy(ri,"ri");
-    }
-    mvwprintw(lower_window,5,VAL_COL+3," %s %s %s     ",cts,dcd,ri);
+    bool cts,dcd,dtr,ri,rts;
+    MyPort.PollHandshake();
+    cts=MyPort.GetCTS();
+    dcd=MyPort.GetDCD();
+    dtr=MyPort.GetDTR();
+    ri=MyPort.GetRI();
+    rts=MyPort.GetRTS();
+    mvwprintw(lower_window,5,VAL_COL-2," CTS=%c DCD=%c DTR=%c RI=%c RTS=%c ",
+	      (cts?'1':'0'),
+	      (dcd?'1':'0'),
+	      (dtr?'1':'0'),
+	      (ri?'1':'0'),
+	      (rts?'1':'0'));
     wrefresh(lower_window);
   }
   void NextMenu(int step){
@@ -360,7 +333,7 @@ private:
 	      LogWindowMessage((char *)"# new serial port = ",SerialPort);
 	      MyPort.OpenPort(SerialPort,newstring);
 	    } else {
-	      if(MyPort.IsPortOpen()){
+	      if(MyPort.PortIsOpen()){
 		MyPort.ClosePort();
 		strcpy(newstring,"Port closed");
 	      } else {
@@ -395,7 +368,7 @@ private:
 	      LogWindowMessageHex((char *)"> ",newstring);
 	      break;
 	    }
-	    if(MyPort.IsPortOpen())MyPort.WritePort(newstring);
+	    if(MyPort.PortIsOpen())MyPort.WritePort(newstring);
 	    break;
 	  case 6:
 	    dont_quit=false;
@@ -420,8 +393,8 @@ private:
 }CW;
 
 int main(int argc, char *argv[]){
-  int i;
   while(CW.CheckInputs());
   endwin();
+  MyPort.ClosePort();
   printf("Build date %s, %s\n",__DATE__,__TIME__);
 }
