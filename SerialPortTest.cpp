@@ -55,8 +55,8 @@ public:
 	  ClosePort();
 	} else {
 	  cfmakeraw(&new_tio);
-	  // new_tio.c_cflag = B9600 | CS8 | CSTOPB | CLOCAL | CREAD ; 
-	  new_tio.c_cflag = B9600 | CS8 | CSTOPB | CREAD ; 
+	  new_tio.c_cflag = B9600 | CS8 | CSTOPB | CLOCAL | CREAD ; 
+	  // new_tio.c_cflag = B9600 | CS8 | CSTOPB | CREAD ; 
 	  tcflush(fileno(serial_io), TCIFLUSH);
 	  tcsetattr(fileno(serial_io),TCSANOW,&new_tio);
 	  strcpy(message,"Serial IO port open");
