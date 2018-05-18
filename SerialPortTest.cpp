@@ -392,8 +392,9 @@ private:
 	break;
       case 6:
 	dont_quit=false;
-	  break;
+	break;
       }
+      ShowHandshake();
       UpdateMenuWindow();
     }
     return(dont_quit);
