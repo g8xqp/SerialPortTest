@@ -20,6 +20,7 @@ private:
   FILE * serial_io;
   int serial_fd;
   int handshake_state;
+  bool handshake_changed;
   struct termios new_tio;
   // man ioctl_tty
   void SetHandshake(bool NewState,int handshake_flag){
@@ -33,8 +34,13 @@ private:
   }
   bool GetHandshake(bool Poll,int handshake_flag){
     bool r=false;
+    int last_handshake;
     if(PortIsOpen()){
-      if(Poll) ioctl(serial_fd, TIOCMGET, &handshake_state);
+      if(Poll){
+	last_handshake=handshake_state;
+	ioctl(serial_fd, TIOCMGET, &handshake_state);
+	handshake_changed = (last_handshake!=handshake_state);
+      }
       r=(handshake_state  & handshake_flag);
     }
     return(r);
@@ -111,6 +117,9 @@ public:
   bool GetRTS(bool Poll){
     return(GetHandshake(Poll,TIOCM_RTS));
   }
+  bool HandshakeChanged(){
+    return(handshake_changed);
+  }
   bool PortIsOpen(){
     return(serial_io!=NULL);
   }
@@ -173,7 +182,7 @@ private:
     "Toggle DTR               ",
     "Toggle RTS               ",
     "Send string              ",
-    "EXIT:                    " };
+    "EXIT:  " };
   void QueryMenu(const char * query,char * reply){
     int msize;
     msize=sizeof(menu_choices[0])-1;
@@ -197,21 +206,25 @@ private:
     wrefresh(upper_window); 
   }
   
-  time_t TimeNow;
-  bool CheckTimeChanged(){
-    time_t old_time;
-    old_time=TimeNow;
-    time(&TimeNow);
-    return(old_time!=TimeNow);
-  }
   int MenuSelected;
   int DisplayMode;
   char SerialPort[20];
+  time_t TimeNow;
+  void ShowTime(bool refresh_window){
+    char text_time[20];
+    time_t old_time;
+    old_time=TimeNow;
+    time(&TimeNow);
+    if(old_time!=TimeNow){
+      strftime(text_time,20,"%H:%M:%S",gmtime(&TimeNow));
+      mvwprintw(lower_window, 5,VAL_COL-20, "  %s  ",text_time); 
+      if(refresh_window)wrefresh(lower_window);
+    }
+  }
   void UpdateMenuWindow(){
     int i,msize;
     bool reverse;
     char disp_mode[20];
-    char text_time[20];
     msize=sizeof(menu_choices[0])-1;
     scrollok(lower_window,FALSE);
     keypad(lower_window,TRUE);
@@ -229,16 +242,16 @@ private:
       strcpy(disp_mode,"HEX");
       break;
     }
-    strftime(text_time,20,"%H:%M:%S",gmtime(&TimeNow));
     mvwprintw(lower_window, 0,VAL_COL, "= %s  %s     ",
 	      SerialPort,
-	      (char*)(MyPort.PortIsOpen()?"[Open]":"[Closed]")); 
+	      (char*)(MyPort.PortIsOpen()?"[Open]       ":"[Closed]       ")); 
     mvwprintw(lower_window, 1,VAL_COL, "= %s  ",disp_mode); 
     mvwprintw(lower_window, 2,VAL_COL, "= %d  ",(MyPort.GetDTR(false)?1:0));
-    mvwprintw(lower_window, 3,VAL_COL, "= %d  ",(MyPort.GetRTS(false)?1:0)); 
-    mvwprintw(lower_window, 5,VAL_COL-20, "  %s  ",text_time); 
+    mvwprintw(lower_window, 3,VAL_COL, "= %d  ",(MyPort.GetRTS(false)?1:0));
+    ShowTime(false);
     wrefresh(lower_window);
   }
+  bool last_cts,last_dcd,last_dsr,last_dtr,last_ri,last_rts;
   void ShowHandshake(){
     bool cts,dcd,dsr,dtr,ri,rts;
     cts=MyPort.GetCTS(true);
@@ -247,14 +260,22 @@ private:
     dtr=MyPort.GetDTR(false);
     ri=MyPort.GetRI(false);
     rts=MyPort.GetRTS(false);
-    mvwprintw(lower_window,5,VAL_COL-7," CTS=%c DCD=%c DSR=%c DTR=%c RI=%c RTS=%c ",
-	      (cts?'1':'0'),
-	      (dcd?'1':'0'),
-	      (dsr?'1':'0'),
-	      (dtr?'1':'0'),
-	      (ri?'1':'0'),
-	      (rts?'1':'0'));
-    wrefresh(lower_window);
+    if(dtr!=last_dtr)LogWindowMessage((char *)"> ",(char *)((last_dtr=dtr)?"DTR +":"DTR -"));
+    if(rts!=last_rts)LogWindowMessage((char *)"> ",(char *)((last_rts=rts)?"RTS +":"RTS -"));
+    if(cts!=last_cts)LogWindowMessage((char *)"< ",(char *)((last_cts=cts)?"CTS +":"CTS -"));
+    if(dcd!=last_dcd)LogWindowMessage((char *)"< ",(char *)((last_dcd=dcd)?"DCD +":"DCD -"));
+    if(dsr!=last_dsr)LogWindowMessage((char *)"< ",(char *)((last_dsr=dsr)?"DSR +":"DSR -"));
+    if(ri!=last_ri)  LogWindowMessage((char *)"< ",(char *)((last_ri=ri)  ?"RI +":"RI -"));
+    if(MyPort.HandshakeChanged()){
+      mvwprintw(lower_window,5,VAL_COL-7," CTS=%c DCD=%c DSR=%c DTR=%c RI=%c RTS=%c ",
+		(cts?'1':'0'),
+		(dcd?'1':'0'),
+		(dsr?'1':'0'),
+		(dtr?'1':'0'),
+		(ri?'1':'0'),
+		(rts?'1':'0'));
+      wrefresh(lower_window);
+    }
   }
   void NextMenu(int step){
     MenuSelected+=step;
@@ -303,8 +324,8 @@ private:
         upper_window  = CreateNewWindow(row-(msize+4) , col-2  , 1             , 1   , false);
         lower_window_border = CreateNewWindow(msize+2       , col    , row-(msize+2) , 0   , true);
         lower_window  = CreateNewWindow(msize         , col-2  , row-(msize+1) , 1   , false);
+	UpdateMenuWindow();
     }
-    UpdateMenuWindow();
     return(WindowOK);
   }
   bool CheckInputs(){
@@ -314,64 +335,66 @@ private:
     while(!OpenWindow());
     strcpy(newstring,"");
     ShowHandshake();
-    if(CheckTimeChanged()){
-      UpdateMenuWindow();
-    } else {
-      if(MyPort.ReadPort(newstring)){
+    ShowTime(true);
+    if(MyPort.ReadPort(newstring)) {
+      switch(DisplayMode){
+      default:
+      case 0: 
 	LogWindowMessage((char *)"< ",newstring);
-      } else {
-	if(CheckMenuSelected()){
-	  switch(MenuSelected){
-	  default:
-	    break;
-	  case 1:
-	    sprintf(qstring,"New port ID [%s] ?",SerialPort);
-	    QueryMenu(qstring,newstring);
-	    if(0!=strcmp(newstring,"")){
-	      strcpy(SerialPort,newstring);
-	      LogWindowMessage((char *)"# new serial port = ",SerialPort);
-	      MyPort.OpenPort(SerialPort,newstring);
-	    } else {
-	      if(MyPort.PortIsOpen()){
-		MyPort.ClosePort();
-		strcpy(newstring,"Port closed");
-	      } else {
-		MyPort.OpenPort(SerialPort,newstring);
-	      }
-	    }
-	    LogWindowMessage((char *)"# ",newstring);
-	    break;
-	  case 2:
-	    if(++DisplayMode>=1)DisplayMode=0;
-	    break;
-	  case 3:
-	    MyPort.SetDTR(!MyPort.GetDTR(false));
-	    LogWindowMessage((char *)"> ",(char *)(MyPort.GetDTR(true)?"DTR +":"DTR -"));
-	    break;
-	  case 4:
-	    MyPort.SetRTS(!MyPort.GetRTS(false));
-	    LogWindowMessage((char *)"> ",(char *)(MyPort.GetRTS(true)?"RTS +":"RTS -"));
-	    break;
-	  case 5:
-	    QueryMenu("Write string?",newstring);
-	    switch(DisplayMode){
-	    default:
-	    case 0: 
-	      LogWindowMessage((char *)"> ",newstring);
-	      break;
-	    case 1:
-	      LogWindowMessageHex((char *)"> ",newstring);
-	      break;
-	    }
-	    if(MyPort.PortIsOpen())MyPort.WritePort(newstring);
-	    break;
-	  case 6:
-	    dont_quit=false;
-	    break;
-	  }
-	  UpdateMenuWindow();
-	}
+	break;
+      case 1:
+	LogWindowMessageHex((char *)"< ",newstring);
+	break;
       }
+    }
+    if(CheckMenuSelected()){
+      switch(MenuSelected){
+      default:
+	break;
+      case 1:
+	sprintf(qstring,"New port ID [%s] ?",SerialPort);
+	QueryMenu(qstring,newstring);
+	if(0!=strcmp(newstring,"")){
+	  strcpy(SerialPort,newstring);
+	  LogWindowMessage((char *)"# new serial port = ",SerialPort);
+	  MyPort.OpenPort(SerialPort,newstring);
+	} else {
+	  if(MyPort.PortIsOpen()){
+	    MyPort.ClosePort();
+	    strcpy(newstring,"Port closed");
+	  } else {
+	    MyPort.OpenPort(SerialPort,newstring);
+	  }
+	}
+	LogWindowMessage((char *)"# ",newstring);
+	break;
+      case 2:
+	if(++DisplayMode>1)DisplayMode=0;
+	break;
+      case 3:
+	MyPort.SetDTR(!MyPort.GetDTR(false));
+	break;
+      case 4:
+	MyPort.SetRTS(!MyPort.GetRTS(false));
+	break;
+      case 5:
+	QueryMenu("Write string?",newstring);
+	switch(DisplayMode){
+	default:
+	case 0: 
+	  LogWindowMessage((char *)"> ",newstring);
+	  break;
+	case 1:
+	  LogWindowMessageHex((char *)"> ",newstring);
+	  break;
+	}
+	if(MyPort.PortIsOpen())MyPort.WritePort(newstring);
+	break;
+      case 6:
+	dont_quit=false;
+	  break;
+      }
+      UpdateMenuWindow();
     }
     return(dont_quit);
   }
@@ -391,5 +414,5 @@ int main(int argc, char *argv[]){
   while(CW.CheckInputs());
   endwin();
   MyPort.ClosePort();
-  printf("Build date %s, %s\n",__DATE__,__TIME__);
+  printf("\nBuild date %s, %s\n\n",__DATE__,__TIME__);
 }
