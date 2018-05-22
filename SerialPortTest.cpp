@@ -15,6 +15,7 @@
 #include <time.h>   
 #include <unistd.h>
 
+#define BUFF_SIZE 256
 class MyPort{
 private:
   FILE * serial_io;
@@ -60,7 +61,7 @@ public:
 	  ClosePort();
 	} else {
 	  cfmakeraw(&new_tio);
-	  new_tio.c_cflag = B9600 | CS8 | CSTOPB | CLOCAL | CREAD ; 
+	  new_tio.c_cflag = B9600 | CS7 | CSTOPB | CLOCAL | CREAD ; 
 	  tcflush(fileno(serial_io), TCIFLUSH);
 	  tcsetattr(fileno(serial_io),TCSANOW,&new_tio);
 	  strcpy(message,"Serial IO port open");
@@ -74,8 +75,8 @@ public:
   
   bool ReadPort(char * NewString){
     int j=0;
-    if(PortIsOpen())j=fread(NewString,1,60,serial_io);
-    NewString[j]=0;
+    if(PortIsOpen())j=fread(NewString,1,BUFF_SIZE-1,serial_io);
+    if(j>=0)NewString[j]=0;
     return(j>0);
   }
   void WritePort(char * NewString){
@@ -329,14 +330,12 @@ private:
     return(WindowOK);
   }
   bool CheckInputs(){
-    char newstring[50];
+    char newstring[BUFF_SIZE];
     char qstring[70];
     bool dont_quit=true;
     while(!OpenWindow());
-    strcpy(newstring,"");
-    ShowHandshake();
     ShowTime(true);
-    if(MyPort.ReadPort(newstring)) {
+    while(MyPort.ReadPort(newstring)) {
       switch(DisplayMode){
       default:
       case 0: 
@@ -346,7 +345,9 @@ private:
 	LogWindowMessageHex((char *)"< ",newstring);
 	break;
       }
+      usleep(30000);
     }
+    ShowHandshake();
     if(CheckMenuSelected()){
       switch(MenuSelected){
       default:
@@ -379,16 +380,18 @@ private:
 	break;
       case 5:
 	QueryMenu("Write string?",newstring);
-	switch(DisplayMode){
-	default:
-	case 0: 
-	  LogWindowMessage((char *)"> ",newstring);
-	  break;
-	case 1:
-	  LogWindowMessageHex((char *)"> ",newstring);
-	  break;
+	if(MyPort.PortIsOpen()){
+	  MyPort.WritePort(newstring);
+	  switch(DisplayMode){
+	  default:
+	  case 0: 
+	    LogWindowMessage((char *)"> ",newstring);
+	    break;
+	  case 1:
+	    LogWindowMessageHex((char *)"> ",newstring);
+	    break;
+	  }
 	}
-	if(MyPort.PortIsOpen())MyPort.WritePort(newstring);
 	break;
       case 6:
 	dont_quit=false;
